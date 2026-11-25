@@ -63,6 +63,7 @@ canvas{display:block;touch-action:none}
 .chip{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.75);display:inline-block}
 .lookTxt{margin-left:3px}
 #rerollBtn{border:0;border-radius:999px;padding:7px 12px;background:#2d3446;color:var(--text);cursor:pointer;font-size:13px;white-space:nowrap}
+#skipBtn{width:100%;margin-top:6px;padding:8px;border:0;background:transparent;color:var(--muted);font-size:13px;cursor:pointer;text-decoration:underline}
 #enterBtn{width:100%;padding:12px;border:0;border-radius:10px;background:var(--accent);color:#2a1b00;font-weight:800;font-size:16px;cursor:pointer}
 #title p#online{animation:none;margin-top:10px;font-size:12px;min-height:14px}
 .tag{position:fixed;transform:translate(-50%,-100%);background:rgba(20,24,34,.85);color:#fff;font-size:12px;font-weight:700;padding:3px 9px;
@@ -91,7 +92,7 @@ canvas{display:block;touch-action:none}
 <div id="zzz"><span>Z</span><span>z</span><span>Z</span></div>
 <button id="rewake">☀️ 다시 일어나기</button>
 <div id="fade"></div>
-<div id="title"><div class="card"><h2>🎄 연구실 출근</h2><p class="sub">이름을 쓰고 입장하세요. 같은 링크로 들어온 사람들과 함께 있어요.</p><input id="nameInput" maxlength="12" placeholder="이름 (예: 김연구)" autocomplete="off"><div class="look"><div id="lookChips"></div><button id="rerollBtn" type="button">🎲 다른 모습</button></div><button id="enterBtn" type="button">입장하기</button><p id="online"></p></div></div>
+<div id="title"><div class="card"><h2>🎄 연구실 출근</h2><p class="sub">이름을 쓰고 입장하세요. 같은 링크로 들어온 사람들과 함께 있어요.</p><input id="nameInput" maxlength="12" placeholder="이름 (예: 김연구)" autocomplete="off"><div class="look"><div id="lookChips"></div><button id="rerollBtn" type="button">🎲 다른 모습</button></div><button id="enterBtn" type="button">입장하기</button><button id="skipBtn" type="button">인트로 건너뛰고 바로 연구실로 →</button><p id="online"></p></div></div>
 <div id="who"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -1333,20 +1334,21 @@ function renderChips() {
 }
 applyLook(me, myLook); renderChips();
 $('rerollBtn').onclick = () => { myLook = randLook(); applyLook(me, myLook); renderChips(); };
-function enterGame() {
+function enterGame(skipIntro) {
   myName = (nameInput.value.replace(/[\u0000-\u001f]/g, '').trim() || '익명').slice(0, 12);
   try { localStorage.setItem('labCommute', JSON.stringify({ name: myName, look: myLook })); } catch (e) {}
   meBadge.textContent = myName;
   ensureAudio(); startMusic();
   titleEl.style.display = 'none';
-  wakeUp();
+  if (skipIntro) { zzzOn = false; enterLab(); } else wakeUp();
 }
-$('enterBtn').onclick = enterGame;
+$('enterBtn').onclick = () => enterGame(false);
+$('skipBtn').onclick = () => enterGame(true);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') enterGame(); });
 setTimeout(() => { try { nameInput.focus(); } catch (e) {} }, 300);
 
 // ---------- 다른 사람들 ----------
-let room = null, lastSent = '', sendT = 0;
+let room = null, lastSent = '', sendT = 0, netState = 'connecting', peersReady = false;
 const remotes = new Map();   // peer → 원격 캐릭터
 const PH_OF = { title: 'title', waking: 'home', choice: 'home', sleeping: 'sleep', commute: 'commute', door: 'commute', opening: 'commute', lab: 'lab' };
 const num = (v, lo, hi, d = 0) => { v = Number(v); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
@@ -1370,6 +1372,8 @@ function updateRemote(peer) {
   const name = typeof pr.n === 'string' ? pr.n.replace(/[\u0000-\u001f]/g, '').slice(0, 12) : '';
   const ph = ['title', 'home', 'sleep', 'commute', 'lab'].includes(pr.ph) ? pr.ph : 'title';
   if (ph === 'lab' && r.ph && r.ph !== 'lab' && phase === 'lab') toast(`🎄 ${name || '익명'}님이 출근했어요!`, 2200);
+  else if (peersReady && !r.announced && name && ph !== 'title' && ph !== 'lab' && phase !== 'title') toast(`👋 ${name}님이 접속했어요 · 곧 출근해요`, 2200);
+  if (name && ph !== 'title') r.announced = true;
   r.ph = ph; r.name = name || '익명'; r.tag.textContent = r.name;
   const lk = cleanLook(pr.lk), key = JSON.stringify(lk);
   if (key !== r.lookKey) { r.lookKey = key; applyLook(r.p, lk); }
@@ -1388,6 +1392,7 @@ function updateRemote(peer) {
 function onPeersChange(ch) {
   ch.left.forEach(peer => removeRemote(peer.peer));
   ch.peers.forEach(peer => { if (!peer.sameTab && peer.kind === 'viewer') updateRemote(peer); });
+  peersReady = true;
   renderWho();
 }
 function seatTaker(i) { for (const r of remotes.values()) if (r.ph === 'lab' && r.seat === i) return r; return null; }
@@ -1395,10 +1400,11 @@ const STATUS = r => r.ph === 'lab' ? (r.seat != null ? `💺 ${r.seat + 1}번 �
   ({ title: '입장 중…', home: '🛏 집', sleep: '😴 자는 중', commute: '🚶 출근 중' })[r.ph] || '';
 function renderWho() {
   const others = [...remotes.values()];
-  onlineEl.textContent = room ? (others.length ? `지금 ${others.length}명이 함께 있어요` : '아직 아무도 없어요 · 링크를 공유해 보세요') : '';
+  const active = others.filter(r => r.ph !== 'title');
+  onlineEl.textContent = room ? (active.length ? `🟢 연결됨 · 지금 ${active.length}명이 접속 중` : '🟢 연결됨 · 아직 아무도 없어요 (링크를 공유해 보세요)') : (netState === 'off' ? '⚪ 혼자 모드 · 서버에 연결되지 않았어요' : '연결 중…');
   if (!room || phase === 'title') { whoEl.style.display = 'none'; return; }
   whoEl.style.display = 'block'; whoEl.textContent = '';
-  const h = document.createElement('div'); h.className = 'whoHead'; h.textContent = `👥 ${others.length + 1}명 접속`; whoEl.appendChild(h);
+  const h = document.createElement('div'); h.className = 'whoHead'; h.textContent = `👥 ${active.length + 1}명 접속`; whoEl.appendChild(h);
   const row = (name, status, me) => {
     const d = document.createElement('div'); d.className = 'whoRow' + (me ? ' me' : '');
     const a = document.createElement('b'); a.textContent = name + (me ? ' (나)' : ''); const b = document.createElement('span'); b.textContent = status;
@@ -1491,11 +1497,14 @@ async function firebaseRoom(cfg) {
   try {
     if (window.claude && typeof window.claude.use === 'function') room = await window.claude.use('room');
     if (!room && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.databaseURL) room = await firebaseRoom(window.FIREBASE_CONFIG);
-    if (!room) return;
+    if (!room) { netState = 'off'; renderWho(); return; }
+    netState = 'on';
     room.onPeers(onPeersChange, () => {});
     renderWho();
-  } catch (e) { console.warn('멀티플레이 연결 실패 → 혼자 모드', e); room = null; }
+  } catch (e) { console.warn('멀티플레이 연결 실패 → 혼자 모드', e); room = null; netState = 'off'; renderWho(); }
 })();
+// 탭이 가려져도(백그라운드) 내 상태는 계속 보내도록 화면 갱신과 별도로 전송
+setInterval(() => netTick(0.1), 100);
 
 // ================== 💧 물 뜨기 / 마시기 ==================
 const HOLD_K = 1;          // 컵을 드는 팔 (로컬 +x 쪽)
@@ -1784,7 +1793,7 @@ function frame(now) {
   updateTweens(dt);
   updatePerson(dt, t);
   xmasUpdate(dt, t); eggUpdate(dt, t);
-  updateRemotes(dt, t); netTick(dt);
+  updateRemotes(dt, t);
   if (phase !== 'lab') {   // 인트로 (집 / 복도)
     updateIntro(dt, t);
     renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
