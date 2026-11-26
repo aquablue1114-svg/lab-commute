@@ -1651,14 +1651,14 @@ function startDisco(byName) {
   discoT = 12; [523, 659, 784, 1046].forEach((f, i) => bleep(f, i * 0.1, 0.15, 'square', 0.05));
   if (byName) toast(`🕺 ${byName}님이 디스코 타임을 열었어요!`, 2200);
 }
-let konamiIdx = 0, discoT = 0;
+let keyBuf = [], discoT = 0;
 const discoLights = [0xff3b8b, 0x3bffd0, 0xffe53b].map((c, i) => { const l = new THREE.PointLight(c, 0, 6.5, 1.6); l.position.set(Math.cos(i * 2.1) * 2.5, 2.4, Math.sin(i * 2.1) * 2.5); scene.add(l); return l; });
 addEventListener('keydown', e => {
   if (phase !== 'lab' || e.repeat) return;
   const k = e.code || e.key;
-  konamiIdx = k === KONAMI[konamiIdx] ? konamiIdx + 1 : (k === KONAMI[0] ? 1 : 0);
-  if (konamiIdx === KONAMI.length) {
-    konamiIdx = 0; myDisco = Date.now(); startDisco(null); eggFound('konami', '🕺 디스코 타임! 모두의 화면에 켜졌어요 (↑↑↓↓←→←→)');
+  keyBuf.push(k); if (keyBuf.length > KONAMI.length) keyBuf.shift();   // 마지막 8개 키만 비교 → 앞에 뭘 눌렀든 OK
+  if (keyBuf.join() === KONAMI.join()) {
+    keyBuf = []; myDisco = Date.now(); startDisco(null); eggFound('konami', '🕺 디스코 타임! 모두의 화면에 켜졌어요 (↑↑↓↓←→←→)');
   }
 });
 // 10) 알람시계 스누즈 (집, 선택지에서)
