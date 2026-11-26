@@ -1339,7 +1339,7 @@ function enterGame(skipIntro) {
   try { localStorage.setItem('labCommute', JSON.stringify({ name: myName, look: myLook })); } catch (e) {}
   meBadge.textContent = myName;
   ensureAudio(); startMusic();
-  titleEl.style.display = 'none';
+  titleEl.style.display = 'none'; nameInput.blur();
   if (skipIntro) { zzzOn = false; enterLab(); } else wakeUp();
 }
 $('enterBtn').onclick = () => enterGame(false);
@@ -1382,6 +1382,9 @@ function updateRemote(peer) {
   r.seat = Number.isInteger(pr.seat) && pr.seat >= 0 && pr.seat < seats.length ? pr.seat : null;
   r.cy = pr.cy == null ? null : num(pr.cy, -7, 7);
   r.hc = pr.hc ? 1 : 0; r.cl = num(pr.cl, 0, 1);
+  const dz = Number(pr.dz) || 0;
+  if (r.dz !== undefined && dz && dz !== r.dz) startDisco(name || '익명');   // 처음 본 값은 지난 일이라 무시
+  r.dz = dz;
   const cs = Number.isInteger(pr.cs) && pr.cs >= 0 && pr.cs < seats.length ? pr.cs : null;
   if (r.cs != null && r.cs !== cs) seats[r.cs].cup.g.visible = true;
   r.cs = cs; if (cs != null && seats[cs] !== current) seats[cs].cup.g.visible = false;
@@ -1438,6 +1441,7 @@ function updateRemotes(dt, t) {
     if (!r.hc && p.cupG) { p.shoulders[1].remove(p.cupG); p.cupG = null; }
     if (r.cup) r.cup.set(r.cl);
     if (r.seat != null && !r.hc && seats[r.seat] !== current) seats[r.seat].cup.set(r.cl);
+    p.armUp = discoT > 0 && r.ts < 0.5 && !r.hc ? 0.5 + 0.5 * Math.sin(t * 8 + p.root.position.x) : 0;   // 디스코 중엔 다 같이 춤
     poseOf(p, t);
     if (r.seat != null && r.cy != null && seats[r.seat] !== current) seats[r.seat].swivel.rotation.y = lerpA(seats[r.seat].swivel.rotation.y, r.cy, k);
     if (phase === 'lab') projectTag(mainCam, pos.x, pos.y + 1.85, pos.z, r.tag); else r.tag.style.display = 'none';
@@ -1452,7 +1456,7 @@ function netTick(dt) {
     x: inLab ? r3(me.root.position.x) : 0, z: inLab ? r3(me.root.position.z) : 0, y: r3(wrapA(me.root.rotation.y)),
     s: r3(me.sit), t: r3(me.type), w: me.path ? 1 : 0,
     seat: inLab && current ? current.i : null, cy: inLab && current ? r3(wrapA(current.swivel.rotation.y)) : null,
-    hc: me.heldCup ? 1 : 0, cs: me.heldCup ? seats.indexOf(seats.find(s => s.cup === me.heldCup)) : null,
+    dz: myDisco || null, hc: me.heldCup ? 1 : 0, cs: me.heldCup ? seats.indexOf(seats.find(s => s.cup === me.heldCup)) : null,
     cl: r3(me.heldCup ? me.heldCup.level : (inLab && current ? current.cup.level : 0)),
   };
   const js = JSON.stringify(pr);
@@ -1639,16 +1643,22 @@ function drawErr(msg) {
   codeTex.needsUpdate = true;
 }
 // 9) 코나미 코드 → 디스코
-const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+// e.code(키 위치)로 비교해서 한글 입력 상태(B→ㅠ, A→ㅁ)에서도 동작
+const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight'];
+let myDisco = 0;   // 내가 디스코를 켠 시각 → presence로 다른 사람에게 전달
+function startDisco(byName) {
+  if (phase !== 'lab') return;
+  discoT = 12; [523, 659, 784, 1046].forEach((f, i) => bleep(f, i * 0.1, 0.15, 'square', 0.05));
+  if (byName) toast(`🕺 ${byName}님이 디스코 타임을 열었어요!`, 2200);
+}
 let konamiIdx = 0, discoT = 0;
-const discoLights = [0xff3b8b, 0x3bffd0, 0xffe53b].map((c, i) => { const l = new THREE.PointLight(c, 0, 9); l.position.set(Math.cos(i * 2.1) * 2.5, 2.4, Math.sin(i * 2.1) * 2.5); scene.add(l); return l; });
+const discoLights = [0xff3b8b, 0x3bffd0, 0xffe53b].map((c, i) => { const l = new THREE.PointLight(c, 0, 6.5, 1.6); l.position.set(Math.cos(i * 2.1) * 2.5, 2.4, Math.sin(i * 2.1) * 2.5); scene.add(l); return l; });
 addEventListener('keydown', e => {
-  if (phase !== 'lab' || e.target === nameInput) return;
-  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (phase !== 'lab' || e.repeat) return;
+  const k = e.code || e.key;
   konamiIdx = k === KONAMI[konamiIdx] ? konamiIdx + 1 : (k === KONAMI[0] ? 1 : 0);
   if (konamiIdx === KONAMI.length) {
-    konamiIdx = 0; discoT = 12; eggFound('konami', '🕺 디스코 타임! (↑↑↓↓←→←→BA)');
-    [523, 659, 784, 1046].forEach((f, i) => bleep(f, i * 0.1, 0.15, 'square', 0.05));
+    konamiIdx = 0; myDisco = Date.now(); startDisco(null); eggFound('konami', '🕺 디스코 타임! 모두의 화면에 켜졌어요 (↑↑↓↓←→←→)');
   }
 });
 // 10) 알람시계 스누즈 (집, 선택지에서)
@@ -1723,7 +1733,9 @@ function eggUpdate(dt, t) {
   // 디스코
   if (discoT > 0) {
     discoT -= dt; const on = discoT > 0;
-    discoLights.forEach((l, i) => { l.intensity = on ? 1.4 * (0.5 + 0.5 * Math.sin(t * 6 + i * 2)) : 0; l.position.set(Math.cos(t * 1.5 + i * 2.1) * 2.5, 2.4, Math.sin(t * 1.5 + i * 2.1) * 2.5); });
+    const labHemi = scene.children.find(o => o.isHemisphereLight);
+    if (labHemi) labHemi.intensity = on ? 0.12 : 0.7; sun.intensity = on ? 0.05 : 0.8; roomLight.intensity = on ? 0 : 0.35;
+    discoLights.forEach((l, i) => { l.intensity = on ? 2.6 * (0.35 + 0.65 * Math.max(0, Math.sin(t * 7 + i * 2.1))) : 0; l.color.setHSL(((t * 0.35) + i / 3) % 1, 1, 0.5); l.position.set(Math.cos(t * 1.2 + i * 2.1) * 3, 1.6, Math.sin(t * 1.2 + i * 2.1) * 3); });
     if (state === 'idle' && phase === 'lab') me.armUp = on ? 0.5 + 0.5 * Math.sin(t * 8) : 0;
     if (!on) me.armUp = 0;
   }
