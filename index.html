@@ -1478,22 +1478,45 @@ async function firebaseRoom(cfg) {
   const db = app.database();
   const myId = 'p' + Math.random().toString(36).slice(2, 10);
   const base = db.ref(`rooms/${ROOM_NAME}/peers`), mine = base.child(myId);
-  mine.onDisconnect().remove();
+  const TS = firebase.database.ServerValue.TIMESTAMP;
+  const HEARTBEAT = 20000, STALE = 150000;      // 20초마다 "나 살아있어", 2분 반 동안 소식 없으면 유령으로 보고 지움
+  let lastPr = null, connected = false, offset = 0, lastVal = {}, gone = false;
+  const push = () => { if (lastPr && connected && !gone) return mine.set({ ...lastPr, ts: TS }); return Promise.resolve(); };
+  db.ref('.info/serverTimeOffset').on('value', s => { offset = s.val() || 0; });
+  // 연결이 끊겼다 다시 붙을 때마다(와이파이·노트북 잠자기 등) "끊기면 지워줘"를 다시 등록하고 내 상태를 다시 올림
+  db.ref('.info/connected').on('value', s => {
+    connected = !!s.val();
+    if (connected) mine.onDisconnect().remove().then(push).catch(() => {});
+  });
+  setInterval(() => { push().catch(() => {}); }, HEARTBEAT);
+  // 탭을 닫거나 다른 페이지로 갈 때 바로 지움 (뒤로가기로 돌아오면 다시 올림)
+  addEventListener('pagehide', () => { gone = true; try { mine.remove(); } catch (e) {} });
+  addEventListener('pageshow', e => { if (e.persisted) { gone = false; push().catch(() => {}); } });
   const handlers = [];
   let known = new Set();
-  base.on('value', snap => {
-    const val = snap.val() || {}, peers = [], ids = new Set();
-    for (const [id, pr] of Object.entries(val)) {
+  function emit() {
+    const now = Date.now() + offset, peers = [], ids = new Set();
+    for (const [id, pr] of Object.entries(lastVal)) {
       if (!pr || typeof pr !== 'object') continue;
+      if (id !== myId && !(typeof pr.ts === 'number' && now - pr.ts < STALE)) {
+        base.child(id).remove().catch(() => {});   // 오래 소식 없는 유령(또는 옛 버전이 남긴 찌꺼기) 청소
+        continue;
+      }
       ids.add(id);
       peers.push({ peer: id, sameTab: id === myId, isMe: id === myId, kind: 'viewer', guest: false, by: null, presence: pr });
     }
     const left = [...known].filter(id => !ids.has(id)).map(id => ({ peer: id }));
     known = ids;
     handlers.forEach(h => h({ peers, left, joined: [], updated: [] }));
+  }
+  base.on('value', snap => {
+    lastVal = snap.val() || {};
+    if (lastPr && connected && !gone && !lastVal[myId]) push().catch(() => {});   // 내 자리가 지워졌으면 다시 올림
+    emit();
   });
+  setInterval(emit, 15000);   // 아무도 안 움직여도 주기적으로 유령 검사
   return {
-    presence: pr => mine.set(pr),
+    presence: pr => { lastPr = pr; return push(); },
     onPeers: h => { handlers.push(h); return () => {}; },
   };
 }
